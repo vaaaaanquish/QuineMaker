@@ -1,0 +1,11 @@
+{
+  "name": "quinemaker",
+  "version": "0.1.0",
+  "description": "画像から整形Quineを生成する静的Webサービス",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "test": "node tests/quine.test.mjs",
+    "serve": "python3 -m http.server 8000"
+  }
+}

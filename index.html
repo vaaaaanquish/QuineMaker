@@ -1,0 +1,60 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>QuineMaker — 画像から整形Quineを生成</title>
+  <link rel="stylesheet" href="./styles.css" />
+</head>
+<body>
+  <header>
+    <h1>QuineMaker</h1>
+    <p>画像をアップロードすると、その形に整形された <strong>Quine</strong>（実行するとソース自身を出力するコード）を生成します。</p>
+  </header>
+
+  <main>
+    <div class="col-left">
+    <section class="panel">
+      <h2>1. 画像</h2>
+      <div id="drop" class="drop">
+        <p>画像をドラッグ＆ドロップ、またはクリックして選択</p>
+        <input id="file" type="file" accept="image/*" hidden />
+      </div>
+      <canvas id="preview" class="bitmap" aria-label="二値化プレビュー"></canvas>
+    </section>
+
+    <section class="panel">
+      <h2>2. 設定</h2>
+      <label>言語
+        <select id="lang"></select>
+      </label>
+      <label>二値化しきい値: <span id="threshVal">128</span>
+        <input id="thresh" type="range" min="0" max="255" value="128" />
+      </label>
+      <label class="checkbox">
+        <input id="invert" type="checkbox" /> コード領域を反転
+      </label>
+      <label>末尾コメント
+        <input id="comment" type="text" value="Created by QuineMaker" placeholder="例: QuineMaker by m3" />
+      </label>
+      <button id="generate" disabled>Quine を生成</button>
+      <p id="status" class="status"></p>
+    </section>
+    </div>
+
+    <section class="panel output">
+      <h2>3. 出力</h2>
+      <div class="toolbar">
+        <button id="copy" disabled>コピー</button>
+      </div>
+      <pre id="code" class="code" aria-label="生成されたQuine"></pre>
+    </section>
+  </main>
+
+  <footer>
+    <p>生成はすべてブラウザ内で実行されます。参考: crazy_programming の画像Quine。</p>
+  </footer>
+
+  <script type="module" src="./src/main.js"></script>
+</body>
+</html>
