@@ -3,6 +3,9 @@
 import { loadImage, imageToGrid, gridToCanvas } from './image.js';
 import { makeMask } from './mask.js';
 import { getGenerator, listGenerators } from './generators/index.js';
+import { initI18n, t } from './i18n.js';
+
+initI18n();
 
 const $ = (id) => document.getElementById(id);
 const el = {
@@ -51,14 +54,14 @@ for (const { id, label } of listGenerators()) {
 // ---- image loading ----
 async function handleFile(file) {
   if (!file || !file.type.startsWith('image/')) {
-    setStatus('画像ファイルを選んでください', 'error');
+    setStatus(t('err_pick_image'), 'error');
     return;
   }
   try {
     state.img = await loadImage(file);
     updatePreview();
   } catch {
-    setStatus('画像の読み込みに失敗しました', 'error');
+    setStatus(t('err_load_image'), 'error');
   }
 }
 
@@ -94,9 +97,9 @@ el.generate.addEventListener('click', () => {
   const invert = el.invert.checked;
   const comment = el.comment.value;
   try {
-    setStatus('最適な出力幅を探索中…');
+    setStatus(t('status_searching'));
     const best = findBestWidth(state.img, { threshold, invert, comment, gen });
-    if (!best) throw new Error('収まる出力幅が見つかりませんでした。画像や反転を変えてみてください。');
+    if (!best) { const e = new Error('no width'); e.code = 'err_no_width'; throw e; }
 
     const grid = imageToGrid(state.img, { width: best.width, threshold });
     const mask = makeMask(grid.cells, grid.width, grid.height, { invert });
@@ -106,12 +109,9 @@ el.generate.addEventListener('click', () => {
     el.code.textContent = state.result.source;
     el.copy.disabled = false;
     const totalRows = state.result.height + 1 + state.result.commentRows;
-    setStatus(
-      `生成完了 (${state.result.width}×${totalRows}, ${state.result.source.length}字)`,
-      'ok'
-    );
+    setStatus(t('done', { w: state.result.width, rows: totalRows, len: state.result.source.length }), 'ok');
   } catch (e) {
-    setStatus(e.message || String(e), 'error');
+    setStatus(e.code ? t(e.code, e.params) : (e.message || String(e)), 'error');
     el.code.textContent = '';
     el.copy.disabled = true;
   }
@@ -121,5 +121,5 @@ el.generate.addEventListener('click', () => {
 el.copy.addEventListener('click', async () => {
   if (!state.result) return;
   await navigator.clipboard.writeText(state.result.source);
-  setStatus('クリップボードにコピーしました', 'ok');
+  setStatus(t('copied'), 'ok');
 });

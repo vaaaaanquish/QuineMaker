@@ -153,7 +153,8 @@ export const pythonGenerator = {
   generate(mask, opts = {}) {
     const { W, G, B, cells, renderB64, maskB64, nPayload } = metrics(mask);
     if (W < MIN_WIDTH) {
-      throw new Error(`出力幅が狭すぎます: ${W} < 最小 ${MIN_WIDTH}（末尾の起動コードが収まりません）。`);
+      throw Object.assign(new Error('width too small'),
+        { code: 'err_width_small', params: { w: W, min: MIN_WIDTH } });
     }
 
     const cleaned = (opts.comment || '').replace(/[\r\n]+/g, ' ');
@@ -162,9 +163,8 @@ export const pythonGenerator = {
     const prefix = `${renderB64}${DELIM}${maskB64}${DELIM}${bottomB64}${DELIM}`;
     const leftover = nPayload - prefix.length;
     if (leftover < 0) {
-      throw new Error(
-        `画像が小さすぎます: コードセル ${nPayload} < 必要 ${prefix.length}。出力幅を上げるか反転してください。`
-      );
+      throw Object.assign(new Error('image too small'),
+        { code: 'err_image_small', params: { n: nPayload, need: prefix.length } });
     }
 
     // neutral base64 fill (no "_"), so the body shows only code-like text
