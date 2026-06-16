@@ -3,6 +3,7 @@
 import { loadImage, imageToGrid, gridToCanvas } from './image.js';
 import { makeMask } from './mask.js';
 import { getGenerator, listGenerators } from './generators/index.js';
+import { lift } from './generators/ansi.js';
 import { initI18n, t } from './i18n.js';
 
 initI18n();
@@ -12,7 +13,7 @@ const el = {
   drop: $('drop'), file: $('file'), preview: $('preview'),
   lang: $('lang'),
   thresh: $('thresh'), threshVal: $('threshVal'), invert: $('invert'),
-  colorize: $('colorize'),
+  colorize: $('colorize'), ansi: $('ansi'),
   comment: $('comment'), generate: $('generate'), status: $('status'),
   copy: $('copy'), code: $('code'),
 };
@@ -22,12 +23,12 @@ const PREFER_WIDTH = 120;  // search picks the fitting width closest to this
 const PREVIEW_WIDTH = 120; // width used only for the on-screen binary preview
 
 // Scan widths and pick the fitting one closest to PREFER_WIDTH.
-function findBestWidth(img, { threshold, invert, comment, gen }) {
+function findBestWidth(img, { threshold, invert, comment, gen, ansi }) {
   let best = null;
   for (let W = gen.minWidth; W <= SEARCH_MAX; W++) {
     const grid = imageToGrid(img, { width: W, threshold });
-    const mask = makeMask(grid.cells, grid.width, grid.height, { invert });
-    const m = gen.measure(mask, { comment });
+    const mask = makeMask(grid.cells, grid.width, grid.height, { invert, colors: grid.colors });
+    const m = gen.measure(mask, { comment, ansi });
     if (!m.ok) continue;
     const score = Math.abs(W - PREFER_WIDTH);
     if (!best || score < best.score) best = { width: W, score };
@@ -46,9 +47,34 @@ const escapeHtml = (s) =>
 
 // Dark source pixels would vanish on the dark code background, so lift each
 // channel into [64,255] — keeps the hue/relative tone while staying readable.
-const lift = (v) => Math.round(64 + (v * 191) / 255);
+// (shared with the ANSI generator so the on-screen and terminal colors match)
 const tint = (colors, idx) =>
   `rgb(${lift(colors[idx])},${lift(colors[idx + 1])},${lift(colors[idx + 2])})`;
+
+// Render an ANSI-colored source for the on-screen pane: turn 24-bit fg codes
+// (\x1b[38;2;r;g;bm ... \x1b[0m) into spans so the preview matches the terminal.
+function ansiToHtml(source) {
+  const re = /\x1b\[([0-9;]*)m/g;
+  let html = '';
+  let last = 0;
+  let open = false;
+  let m;
+  while ((m = re.exec(source))) {
+    html += escapeHtml(source.slice(last, m.index));
+    last = re.lastIndex;
+    const parts = m[1].split(';');
+    if (m[1] === '0' || m[1] === '') {
+      if (open) { html += '</span>'; open = false; }
+    } else if (parts[0] === '38' && parts[1] === '2') {
+      if (open) html += '</span>';
+      html += `<span style="color:rgb(${+parts[2]},${+parts[3]},${+parts[4]})">`;
+      open = true;
+    }
+  }
+  html += escapeHtml(source.slice(last));
+  if (open) html += '</span>';
+  return html;
+}
 
 // Render the quine source as HTML, tinting each picture-region character with
 // the original image's color at its cell. Picture rows are exactly W single-
@@ -72,10 +98,13 @@ function renderColored(source, grid, picHeight) {
   return out.join('\n');
 }
 
-// Paint the current result into the code pane, honoring the colorize toggle.
+// Paint the current result into the code pane. An ANSI-colored source carries
+// its own colors; otherwise the colorize toggle tints the plain source.
 function showCode() {
   if (!state.result) return;
-  if (el.colorize.checked && state.grid) {
+  if (state.result.ansi) {
+    el.code.innerHTML = ansiToHtml(state.result.source);
+  } else if (el.colorize.checked && state.grid) {
     el.code.innerHTML = renderColored(state.result.source, state.grid, state.result.height);
   } else {
     el.code.textContent = state.result.source;
@@ -142,16 +171,17 @@ el.generate.addEventListener('click', () => {
   const threshold = +el.thresh.value;
   const invert = el.invert.checked;
   const comment = el.comment.value;
+  const ansi = el.ansi.checked;
   try {
     setStatus(t('status_searching'));
-    const best = findBestWidth(state.img, { threshold, invert, comment, gen });
+    const best = findBestWidth(state.img, { threshold, invert, comment, gen, ansi });
     if (!best) { const e = new Error('no width'); e.code = 'err_no_width'; throw e; }
 
     const grid = imageToGrid(state.img, { width: best.width, threshold });
-    const mask = makeMask(grid.cells, grid.width, grid.height, { invert });
+    const mask = makeMask(grid.cells, grid.width, grid.height, { invert, colors: grid.colors });
     gridToCanvas(grid, el.preview, { charBit: mask.charBit });
 
-    state.result = gen.generate(mask, { comment });
+    state.result = gen.generate(mask, { comment, ansi });
     state.grid = grid;
     showCode();
     el.copy.disabled = false;

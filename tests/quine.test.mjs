@@ -25,6 +25,7 @@ function isWide(cp) {
   );
 }
 const dispW = (s) => Array.from(s).reduce((w, ch) => w + (isWide(ch.codePointAt(0)) ? 2 : 1), 0);
+const stripAnsi = (s) => s.replace(/\x1b\[[0-9;]*m/g, '');
 
 function diamondMask(width, height = width) {
   const cells = new Uint8Array(width * height);
@@ -37,20 +38,37 @@ function diamondMask(width, height = width) {
   return makeMask(cells, width, height, {});
 }
 
-function runCase(lang, gen, runner, ext, mark, name, mask, comment) {
-  const { source, width, height } = gen.generate(mask, { comment });
-  const tag = `[${lang}] ${name}`;
+// A diamond plus a synthetic RGB gradient, for exercising the ANSI color mode.
+function coloredDiamond(width, height = width) {
+  const m = diamondMask(width, height);
+  const colors = new Uint8ClampedArray(width * height * 3);
+  for (let r = 0; r < height; r++) {
+    for (let c = 0; c < width; c++) {
+      const i = (r * width + c) * 3;
+      colors[i] = (255 * c) / width;       // R ramps left->right
+      colors[i + 1] = (255 * r) / height;  // G ramps top->bottom
+      colors[i + 2] = 200;
+    }
+  }
+  m.colors = colors;
+  return m;
+}
+
+function runCase(lang, gen, runner, ext, mark, name, mask, comment, ansi = false) {
+  const { source, width, height } = gen.generate(mask, { comment, ansi });
+  const tag = `[${lang}${ansi ? '+ansi' : ''}] ${name}`;
 
   // 1) clean rectangle: every line is exactly `width` display columns
+  // (ANSI color codes are zero-width in a terminal, so strip them first)
   const lines = source.split('\n');
   if (lines[lines.length - 1] === '') lines.pop(); // trailing newline
-  const bad = lines.find((l) => dispW(l) !== width);
+  const bad = lines.find((l) => dispW(stripAnsi(l)) !== width);
   if (bad !== undefined) {
-    throw new Error(`${tag} non-rectangular: a line has ${dispW(bad)} cols, want ${width}`);
+    throw new Error(`${tag} non-rectangular: a line has ${dispW(stripAnsi(bad))} cols, want ${width}`);
   }
 
   // 2) no "_" in the picture body (the base64 region; closer/comment may have _)
-  const body = lines.slice(0, height).join('\n');
+  const body = stripAnsi(lines.slice(0, height).join('\n'));
   if (body.includes('_')) throw new Error(`${tag} body contains "_" filler`);
 
   // 3) the comment appears as a readable trailing comment
@@ -75,6 +93,18 @@ function runCase(lang, gen, runner, ext, mark, name, mask, comment) {
       `src=${JSON.stringify(source.slice(i, i + 20))} out=${JSON.stringify(res.stdout.slice(i, i + 20))}`
     );
   }
+
+  // 5) ANSI robustness: if a terminal/editor eats the ESC bytes on copy-paste,
+  // the file must still run (not crash) and regenerate the proper colored
+  // source — i.e. running the ESC-stripped file outputs the original source.
+  if (ansi) {
+    const mangled = join(dir, `q.noesc.${ext}`);
+    writeFileSync(mangled, source.replaceAll('\x1b', ''));
+    const r2 = spawnSync(runner, [mangled], { encoding: 'utf8' });
+    if (r2.status !== 0) throw new Error(`${tag} ESC-stripped crashes: ${r2.stderr}`);
+    if (r2.stdout !== source) throw new Error(`${tag} ESC-stripped did not self-heal to source`);
+  }
+
   console.log(`✓ ${tag} (${source.length} chars, ${width}x${height} rect)`);
 }
 
@@ -89,10 +119,21 @@ const cases = [
   ['diamond-90x140 quoty comment', diamondMask(90, 140), `a'b"c:d\\e@f#g!h`],
 ];
 
+// ANSI color cases: same shapes with a gradient, generated as colored quines.
+const ansiCases = [
+  ['color diamond-120 default', coloredDiamond(120), ''],
+  ['color diamond-120 ascii comment', coloredDiamond(120), 'QuineMaker by m3'],
+  ['color diamond-140x100 unicode', coloredDiamond(140, 100), 'クワイン'],
+];
+
 let failed = 0;
 for (const { lang, gen, runner, ext, mark } of langs) {
   for (const [name, mask, comment] of cases) {
     try { runCase(lang, gen, runner, ext, mark, name, mask, comment); }
+    catch (e) { failed++; console.error(`✗ ${e.message}`); }
+  }
+  for (const [name, mask, comment] of ansiCases) {
+    try { runCase(lang, gen, runner, ext, mark, name, mask, comment, true); }
     catch (e) { failed++; console.error(`✗ ${e.message}`); }
   }
 }

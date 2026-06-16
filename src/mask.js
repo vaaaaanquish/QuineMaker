@@ -18,9 +18,10 @@ export function countBit(cells, bit) {
   return n;
 }
 
-/** Build a Mask from a 0/1 grid, picking charBit (majority unless inverted). */
-export function makeMask(cells, width, height, { invert = false } = {}) {
+/** Build a Mask from a 0/1 grid, picking charBit (majority unless inverted).
+ *  Optional per-cell colors (3 bytes/cell) ride along for the ANSI color mode. */
+export function makeMask(cells, width, height, { invert = false, colors = null } = {}) {
   const maj = majorityBit(cells);
   const charBit = invert ? (maj ^ 1) : maj;
-  return { width, height, cells, charBit };
+  return { width, height, cells, charBit, colors };
 }
