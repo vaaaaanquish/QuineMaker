@@ -1,10 +1,12 @@
 // Shared helpers for the ANSI-colored quine mode.
 //
-// A colored quine embeds 24-bit ANSI color codes into its own source, so that
-// printing the source (which is exactly what the quine outputs) paints the
-// picture in the terminal. To keep "output == source" intact, the embedded
-// renderer recovers the clean payload by stripping BOTH whitespace AND ANSI
-// sequences from the picture string, then reproduces the very same color codes.
+// A colored quine is a quine "modulo ANSI": the SAVED source is clean text
+// (no escape bytes, so it opens uncorrupted in an editor), and running it
+// prints the SAME text repainted with 24-bit ANSI color codes — stripping the
+// colors from that output reproduces the source exactly. The colors are NOT
+// stored as escape bytes in the source; they live in a base64 segment, and the
+// embedded renderer rebuilds them. (The renderer still strips any ANSI it sees
+// while recovering the payload, so re-running the colored output also works.)
 //
 // Color data must fit inside the picture's code cells, so colors are coarsely
 // quantized (4 levels/channel) into a small palette and the per-cell palette

@@ -55,20 +55,21 @@ function coloredDiamond(width, height = width) {
 }
 
 function runCase(lang, gen, runner, ext, mark, name, mask, comment, ansi = false) {
-  const { source, width, height } = gen.generate(mask, { comment, ansi });
+  const { source, colored, width, height } = gen.generate(mask, { comment, ansi });
   const tag = `[${lang}${ansi ? '+ansi' : ''}] ${name}`;
 
-  // 1) clean rectangle: every line is exactly `width` display columns
-  // (ANSI color codes are zero-width in a terminal, so strip them first)
+  // 1) the SAVED source is clean text (no ANSI bytes) and a clean rectangle:
+  // every line is exactly `width` display columns.
+  if (source.includes('\x1b')) throw new Error(`${tag} saved source contains ANSI escape bytes`);
   const lines = source.split('\n');
   if (lines[lines.length - 1] === '') lines.pop(); // trailing newline
-  const bad = lines.find((l) => dispW(stripAnsi(l)) !== width);
+  const bad = lines.find((l) => dispW(l) !== width);
   if (bad !== undefined) {
-    throw new Error(`${tag} non-rectangular: a line has ${dispW(stripAnsi(bad))} cols, want ${width}`);
+    throw new Error(`${tag} non-rectangular: a line has ${dispW(bad)} cols, want ${width}`);
   }
 
   // 2) no "_" in the picture body (the base64 region; closer/comment may have _)
-  const body = stripAnsi(lines.slice(0, height).join('\n'));
+  const body = lines.slice(0, height).join('\n');
   if (body.includes('_')) throw new Error(`${tag} body contains "_" filler`);
 
   // 3) the comment appears as a readable trailing comment
@@ -79,30 +80,40 @@ function runCase(lang, gen, runner, ext, mark, name, mask, comment, ansi = false
     }
   }
 
-  // 4) true quine: interpreter stdout == source
+  // 4) quine: run the saved (clean) source.
+  //   - plain: stdout == source (strict byte-for-byte quine)
+  //   - ansi : stdout == colored (the generator's predicted colored output),
+  //            and stripping the ANSI from stdout reproduces the source — a
+  //            quine "modulo ANSI".
   const dir = mkdtempSync(join(tmpdir(), 'quine-'));
   const file = join(dir, `q.${ext}`);
   writeFileSync(file, source);
   const res = spawnSync(runner, [file], { encoding: 'utf8' });
   if (res.status !== 0) throw new Error(`${tag} ${runner} error: ${res.stderr}`);
-  if (res.stdout !== source) {
+  const expected = ansi ? colored : source;
+  if (res.stdout !== expected) {
     let i = 0;
-    while (i < source.length && res.stdout[i] === source[i]) i++;
+    while (i < expected.length && res.stdout[i] === expected[i]) i++;
     throw new Error(
       `${tag} NOT a quine. First diff at ${i}: ` +
-      `src=${JSON.stringify(source.slice(i, i + 20))} out=${JSON.stringify(res.stdout.slice(i, i + 20))}`
+      `exp=${JSON.stringify(expected.slice(i, i + 20))} out=${JSON.stringify(res.stdout.slice(i, i + 20))}`
     );
   }
+  if (ansi && stripAnsi(res.stdout) !== source) {
+    throw new Error(`${tag} ANSI-stripped output does not match the saved source`);
+  }
 
-  // 5) ANSI robustness: if a terminal/editor eats the ESC bytes on copy-paste,
-  // the file must still run (not crash) and regenerate the proper colored
-  // source — i.e. running the ESC-stripped file outputs the original source.
+  // 5) the colored output is itself a fixed point: re-running it reproduces it,
+  // even if a terminal/editor ate the ESC bytes when it was copied out (the
+  // bare "[..m" sequences are stripped by the renderer just the same).
   if (ansi) {
-    const mangled = join(dir, `q.noesc.${ext}`);
-    writeFileSync(mangled, source.replaceAll('\x1b', ''));
-    const r2 = spawnSync(runner, [mangled], { encoding: 'utf8' });
-    if (r2.status !== 0) throw new Error(`${tag} ESC-stripped crashes: ${r2.stderr}`);
-    if (r2.stdout !== source) throw new Error(`${tag} ESC-stripped did not self-heal to source`);
+    for (const [suffix, text] of [['out', colored], ['out.noesc', colored.replaceAll('\x1b', '')]]) {
+      const f = join(dir, `q.${suffix}.${ext}`);
+      writeFileSync(f, text);
+      const r2 = spawnSync(runner, [f], { encoding: 'utf8' });
+      if (r2.status !== 0) throw new Error(`${tag} re-running colored (${suffix}) crashes: ${r2.stderr}`);
+      if (r2.stdout !== colored) throw new Error(`${tag} colored output (${suffix}) is not a fixed point`);
+    }
   }
 
   console.log(`✓ ${tag} (${source.length} chars, ${width}x${height} rect)`);

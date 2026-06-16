@@ -98,12 +98,13 @@ function renderColored(source, grid, picHeight) {
   return out.join('\n');
 }
 
-// Paint the current result into the code pane. An ANSI-colored source carries
-// its own colors; otherwise the colorize toggle tints the plain source.
+// Paint the current result into the code pane. In ANSI mode we show `colored`
+// — what the file prints when run — while the copy/save path uses the clean
+// `source`; otherwise the colorize toggle tints the plain source.
 function showCode() {
   if (!state.result) return;
   if (state.result.ansi) {
-    el.code.innerHTML = ansiToHtml(state.result.source);
+    el.code.innerHTML = ansiToHtml(state.result.colored);
   } else if (el.colorize.checked && state.grid) {
     el.code.innerHTML = renderColored(state.result.source, state.grid, state.result.height);
   } else {

@@ -231,11 +231,18 @@ export const pythonGenerator = {
       throw new Error(`internal: payload ${payload.length} != cells ${nPayload}`);
     }
 
-    const source = ansi
+    // The SAVED source is always clean (no ANSI bytes), so it opens uncorrupted
+    // in an editor. In ANSI mode the colors live only in the base64 segment
+    // P[3]; running the file recovers them and prints the colored form below.
+    const source = buildSource(cells, W, G, B, payload, bottomText);
+    // `colored` is the exact byte sequence the embedded renderer reproduces on
+    // stdout — used for the on-screen preview and as the expected run output.
+    // It is a quine "modulo ANSI": stripping its color codes yields `source`.
+    const colored = ansi
       ? composeColoredRows(cells, W, G, B, HEAD, payload, color.palette, color.idx) +
         '\n' + bottomText + '\n'
-      : buildSource(cells, W, G, B, payload, bottomText);
+      : undefined;
     const commentRows = bottomText.split('\n').length - 1;
-    return { source, nCode: nPayload, width: W, height: G, commentRows, ansi };
+    return { source, colored, nCode: nPayload, width: W, height: G, commentRows, ansi };
   },
 };
