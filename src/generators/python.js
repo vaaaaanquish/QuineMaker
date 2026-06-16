@@ -18,6 +18,7 @@
 // (a repeat of the renderer's base64) so the body never shows "_".
 
 import { b64encodeUtf8, b64encodeBytes, packBits } from './base64.js';
+import { colorSegment, composeColoredRows } from './ansi.js';
 
 const DELIM = '#!#'; // not in the base64 alphabet
 const HEAD = "p='''";
@@ -28,8 +29,18 @@ const BOOT =
   DELIM +
   `")[0]))`;
 
+// ANSI variant: also strip the embedded color sequences before decoding. The
+// ESC (\x1b) is optional so the quine still recovers if a terminal/editor ate
+// the control byte on copy-paste, leaving the bare "[..m" in the picture.
+// ("[" never occurs in base64/DELIM, so stripping "[0-9;]*m" is safe.)
+const BOOT_ANSI =
+  `''';exec(__import__("base64").b64decode(__import__("re").sub(r"\\x1b?\\[[0-9;]*m|\\s","",p).split("` +
+  DELIM +
+  `")[0]))`;
+
 const SEP = ' # '; // separator before the trailing comment: ` # comment`
 export const MIN_WIDTH = BOOT.length + SEP.length; // closer + ` # ` must fit
+const MIN_WIDTH_ANSI = BOOT_ANSI.length + SEP.length;
 
 // East-Asian full/wide code points render as 2 columns in monospaced fonts.
 function isWide(cp) {
@@ -73,12 +84,45 @@ sys.stdout.write("\\n".join(o)+"\\n")
 `;
 }
 
+// ANSI renderer: recovers q by stripping color sequences + whitespace, decodes
+// the palette/RLE color segment P[3], and re-emits a color code whenever the
+// cell color changes (resetting at each row end). Mirrors composeColoredRows.
+function buildRendererAnsi(W, G, B) {
+  return `import base64 as z,sys,re
+q=re.sub(r"\\x1b?\\[[0-9;]*m|\\s","",p)
+P=q.split("${DELIM}")
+M=z.b64decode(P[1]);C=z.b64decode(P[3])
+W=${W};G=${G};B=${B}
+b=[(M[i//8]>>(7-i%8))&1 for i in range(W*G)]
+K=C[0];pal=[(C[1+3*j],C[2+3*j],C[3+3*j]) for j in range(K)]
+idx=[];i=1+3*K
+while i<len(C):
+ idx+=[C[i+1]]*C[i];i+=2
+o=[];k=0
+for r in range(G):
+ w=[];cur=-1
+ for c in range(W):
+  if r<1 and c<5:
+   if cur!=-1:w.append("\\x1b[0m");cur=-1
+   w.append("p='''"[c])
+  elif b[r*W+c]==B:
+   ci=idx[k]
+   if ci!=cur:a=pal[ci];w.append("\\x1b[38;2;%d;%d;%dm"%(a[0],a[1],a[2]));cur=ci
+   w.append(q[k]);k+=1
+  else:w.append(" ")
+ if cur!=-1:w.append("\\x1b[0m")
+ o.append("".join(w))
+o.append(z.b64decode(P[2]).decode())
+sys.stdout.write("\\n".join(o)+"\\n")
+`;
+}
+
 // Build the closer line: `''';exec(…)#` followed by the comment tiled to fill
 // the row to exactly W *display* columns (so the right edge stays solid and
 // aligned). With no comment, the neutral base64 `fallback` is tiled instead.
 // At most one trailing space remains when a full-width char straddles the edge.
-function buildBottomText(comment, W) {
-  const avail = W - (BOOT.length + SEP.length); // display cols after ` # `
+function buildBottomText(comment, W, boot = BOOT) {
+  const avail = W - (boot.length + SEP.length); // display cols after ` # `
   let s = '';
   let wsum = 0;
   for (const ch of Array.from(comment || '')) {
@@ -88,7 +132,7 @@ function buildBottomText(comment, W) {
   }
   if (s && wsum < avail) { s += ' '; wsum += 1; } // gap before the filler
   while (wsum < avail) { s += '/'; wsum += 1; }    // `/` fills to the edge
-  return `${BOOT}${SEP}${s}`;
+  return `${boot}${SEP}${s}`;
 }
 
 // Code cells that carry payload (bits==B in rows 0..G-1, minus 5 opener cells).
@@ -103,9 +147,9 @@ function countPayloadCells(cells, W, G, B) {
   return n;
 }
 
-function metrics(mask) {
+function metrics(mask, ansi = false) {
   const { width: W, height: G, cells, charBit: B } = mask;
-  const renderB64 = b64encodeUtf8(buildRenderer(W, G, B));
+  const renderB64 = b64encodeUtf8((ansi ? buildRendererAnsi : buildRenderer)(W, G, B));
   const maskB64 = b64encodeBytes(packBits(cells));
   const nPayload = countPayloadCells(cells, W, G, B);
   return { W, G, B, cells, renderB64, maskB64, nPayload };
@@ -135,14 +179,20 @@ export const pythonGenerator = {
 
   // Lightweight sizing for the width search.
   measure(mask, opts = {}) {
-    const { nPayload, renderB64, maskB64 } = metrics(mask);
+    const ansi = !!opts.ansi;
+    const { W, G, B, cells, nPayload, renderB64, maskB64 } = metrics(mask, ansi);
+    const boot = ansi ? BOOT_ANSI : BOOT;
     const bottomB64 = b64encodeUtf8(
-      buildBottomText((opts.comment || '').replace(/[\r\n]+/g, ' '), mask.width)
+      buildBottomText((opts.comment || '').replace(/[\r\n]+/g, ' '), mask.width, boot)
     );
-    const baseLen = renderB64.length + DELIM.length + maskB64.length +
+    let baseLen = renderB64.length + DELIM.length + maskB64.length +
       DELIM.length + bottomB64.length + DELIM.length;
+    if (ansi) {
+      baseLen += colorSegment(cells, mask.colors, W, G, B, HEAD.length).b64.length + DELIM.length;
+    }
+    const min = ansi ? MIN_WIDTH_ANSI : MIN_WIDTH;
     const leftover = nPayload - baseLen;
-    return { width: mask.width, leftover, ok: leftover >= 0 && mask.width >= MIN_WIDTH };
+    return { width: mask.width, leftover, ok: leftover >= 0 && mask.width >= min };
   },
 
   /**
@@ -151,16 +201,21 @@ export const pythonGenerator = {
    * @returns {{source:string, nCode:number, width:number, height:number, commentRows:number}}
    */
   generate(mask, opts = {}) {
-    const { W, G, B, cells, renderB64, maskB64, nPayload } = metrics(mask);
-    if (W < MIN_WIDTH) {
+    const ansi = !!opts.ansi;
+    const { W, G, B, cells, renderB64, maskB64, nPayload } = metrics(mask, ansi);
+    const min = ansi ? MIN_WIDTH_ANSI : MIN_WIDTH;
+    if (W < min) {
       throw Object.assign(new Error('width too small'),
-        { code: 'err_width_small', params: { w: W, min: MIN_WIDTH } });
+        { code: 'err_width_small', params: { w: W, min } });
     }
 
     const cleaned = (opts.comment || '').replace(/[\r\n]+/g, ' ');
-    const bottomText = buildBottomText(cleaned, W);
+    const bottomText = buildBottomText(cleaned, W, ansi ? BOOT_ANSI : BOOT);
     const bottomB64 = b64encodeUtf8(bottomText);
-    const prefix = `${renderB64}${DELIM}${maskB64}${DELIM}${bottomB64}${DELIM}`;
+    const color = ansi ? colorSegment(cells, mask.colors, W, G, B, HEAD.length) : null;
+    const prefix = ansi
+      ? `${renderB64}${DELIM}${maskB64}${DELIM}${bottomB64}${DELIM}${color.b64}${DELIM}`
+      : `${renderB64}${DELIM}${maskB64}${DELIM}${bottomB64}${DELIM}`;
     const leftover = nPayload - prefix.length;
     if (leftover < 0) {
       throw Object.assign(new Error('image too small'),
@@ -176,8 +231,11 @@ export const pythonGenerator = {
       throw new Error(`internal: payload ${payload.length} != cells ${nPayload}`);
     }
 
-    const source = buildSource(cells, W, G, B, payload, bottomText);
+    const source = ansi
+      ? composeColoredRows(cells, W, G, B, HEAD, payload, color.palette, color.idx) +
+        '\n' + bottomText + '\n'
+      : buildSource(cells, W, G, B, payload, bottomText);
     const commentRows = bottomText.split('\n').length - 1;
-    return { source, nCode: nPayload, width: W, height: G, commentRows };
+    return { source, nCode: nPayload, width: W, height: G, commentRows, ansi };
   },
 };
