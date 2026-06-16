@@ -12,6 +12,7 @@ const el = {
   drop: $('drop'), file: $('file'), preview: $('preview'),
   lang: $('lang'),
   thresh: $('thresh'), threshVal: $('threshVal'), invert: $('invert'),
+  colorize: $('colorize'),
   comment: $('comment'), generate: $('generate'), status: $('status'),
   copy: $('copy'), code: $('code'),
 };
@@ -37,7 +38,49 @@ function findBestWidth(img, { threshold, invert, comment, gen }) {
 const state = {
   img: null,       // HTMLImageElement
   result: null,    // {source,...}
+  grid: null,      // the grid (with per-cell colors) used for the last result
 };
+
+const escapeHtml = (s) =>
+  s.replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]));
+
+// Dark source pixels would vanish on the dark code background, so lift each
+// channel into [64,255] — keeps the hue/relative tone while staying readable.
+const lift = (v) => Math.round(64 + (v * 191) / 255);
+const tint = (colors, idx) =>
+  `rgb(${lift(colors[idx])},${lift(colors[idx + 1])},${lift(colors[idx + 2])})`;
+
+// Render the quine source as HTML, tinting each picture-region character with
+// the original image's color at its cell. Picture rows are exactly W single-
+// width ASCII chars, so column == char index. Bottom (closer/comment) rows,
+// which may contain wide unicode, are emitted plain.
+function renderColored(source, grid, picHeight) {
+  const { colors, width: W } = grid;
+  const lines = source.split('\n');
+  const out = [];
+  for (let r = 0; r < lines.length; r++) {
+    const line = lines[r];
+    if (r >= picHeight) { out.push(escapeHtml(line)); continue; }
+    let row = '';
+    for (let c = 0; c < line.length; c++) {
+      const ch = line[c];
+      if (ch === ' ') { row += ' '; continue; }
+      row += `<span style="color:${tint(colors, (r * W + c) * 3)}">${escapeHtml(ch)}</span>`;
+    }
+    out.push(row);
+  }
+  return out.join('\n');
+}
+
+// Paint the current result into the code pane, honoring the colorize toggle.
+function showCode() {
+  if (!state.result) return;
+  if (el.colorize.checked && state.grid) {
+    el.code.innerHTML = renderColored(state.result.source, state.grid, state.result.height);
+  } else {
+    el.code.textContent = state.result.source;
+  }
+}
 
 function setStatus(msg, kind = '') {
   el.status.textContent = msg || '';
@@ -89,6 +132,9 @@ function updatePreview() {
 
 for (const c of [el.thresh, el.invert]) c.addEventListener('input', updatePreview);
 
+// Toggling colorize only affects how the already-generated code is painted.
+el.colorize.addEventListener('change', showCode);
+
 // ---- generate (always auto-optimizes the width) ----
 el.generate.addEventListener('click', () => {
   if (!state.img) return;
@@ -106,12 +152,14 @@ el.generate.addEventListener('click', () => {
     gridToCanvas(grid, el.preview, { charBit: mask.charBit });
 
     state.result = gen.generate(mask, { comment });
-    el.code.textContent = state.result.source;
+    state.grid = grid;
+    showCode();
     el.copy.disabled = false;
     const totalRows = state.result.height + 1 + state.result.commentRows;
     setStatus(t('done', { w: state.result.width, rows: totalRows, len: state.result.source.length }), 'ok');
   } catch (e) {
     setStatus(e.code ? t(e.code, e.params) : (e.message || String(e)), 'error');
+    state.result = null;
     el.code.textContent = '';
     el.copy.disabled = true;
   }
