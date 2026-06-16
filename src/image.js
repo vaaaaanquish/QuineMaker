@@ -27,8 +27,10 @@ export function loadImage(file) {
  * Convert an image to a binary grid.
  * @param {HTMLImageElement} img
  * @param {{width:number, threshold:number}} opts threshold in [0,255]
- * @returns {{cells:Uint8Array, width:number, height:number}}
+ * @returns {{cells:Uint8Array, colors:Uint8ClampedArray, width:number, height:number}}
  *   cell == 1 means "dark" (luminance < threshold).
+ *   colors holds the resized image's RGB per cell (3 bytes/cell), so the
+ *   on-screen quine can tint each code character with its source color.
  */
 export function imageToGrid(img, { width, threshold }) {
   const W = Math.max(1, Math.round(width));
@@ -43,6 +45,7 @@ export function imageToGrid(img, { width, threshold }) {
   const { data } = ctx.getImageData(0, 0, W, H);
 
   const cells = new Uint8Array(W * H);
+  const colors = new Uint8ClampedArray(W * H * 3);
   for (let i = 0; i < W * H; i++) {
     const r = data[i * 4];
     const g = data[i * 4 + 1];
@@ -51,8 +54,11 @@ export function imageToGrid(img, { width, threshold }) {
     // Treat transparent pixels as light (background).
     const lum = a < 16 ? 255 : 0.299 * r + 0.587 * g + 0.114 * b;
     cells[i] = lum < threshold ? 1 : 0;
+    colors[i * 3] = r;
+    colors[i * 3 + 1] = g;
+    colors[i * 3 + 2] = b;
   }
-  return { cells, width: W, height: H };
+  return { cells, colors, width: W, height: H };
 }
 
 /** Render a 0/1 grid to a small canvas for on-screen preview. */
