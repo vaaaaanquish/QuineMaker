@@ -73,6 +73,7 @@ main {
 }
 .drop.over, .drop:hover { border-color: var(--accent); background: #1b2030; }
 
+.bitmap[hidden] { display: none; }
 .bitmap {
   display: block;
   margin: 1rem auto 0;
