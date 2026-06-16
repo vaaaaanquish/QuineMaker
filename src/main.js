@@ -155,6 +155,7 @@ function updatePreview() {
   const grid = imageToGrid(state.img, { width: PREVIEW_WIDTH, threshold: +el.thresh.value });
   const mask = makeMask(grid.cells, grid.width, grid.height, { invert: el.invert.checked });
   gridToCanvas(grid, el.preview, { charBit: mask.charBit });
+  el.preview.hidden = false;
   setStatus('');
   el.generate.disabled = false;
   el.copy.disabled = true;
