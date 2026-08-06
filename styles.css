@@ -84,6 +84,7 @@ main {
 }
 
 label { display: block; margin: .75rem 0; font-size: .9rem; }
+label[hidden] { display: none; }
 label.checkbox { display: flex; align-items: center; gap: .5rem; }
 label.checkbox:has(input:disabled) { opacity: .4; cursor: not-allowed; }
 select, input[type="text"] {
