@@ -19,7 +19,21 @@ const el = {
   colorize: $('colorize'), ansi: $('ansi'),
   comment: $('comment'), generate: $('generate'), status: $('status'),
   copy: $('copy'), code: $('code'),
+  runHint: $('runHint'), runCmd: $('runCmd'),
 };
+
+const RUNNERS = { python: 'python3', javascript: 'node' };
+
+// Video mode: show a copy-pastable terminal loop that plays the chain.
+// Hidden for image results and cleared on errors / new input.
+function showRunHint(gen) {
+  if (!gen) { el.runHint.hidden = true; return; }
+  const run = RUNNERS[gen.id] || gen.id;
+  const f = `q.${gen.fileExt}`;
+  el.runCmd.textContent =
+    `while :; do ${run} ${f} > n.${gen.fileExt} && mv n.${gen.fileExt} ${f}; clear; cat ${f}; sleep 0.2; done`;
+  el.runHint.hidden = false;
+}
 
 const SEARCH_MAX = 200;
 const PREFER_WIDTH = 120;  // search picks the fitting width closest to this
@@ -256,6 +270,7 @@ function updatePreview() {
   setStatus('');
   el.generate.disabled = false;
   el.copy.disabled = true;
+  showRunHint(null);
 }
 
 for (const c of [el.thresh, el.invert]) c.addEventListener('input', updatePreview);
@@ -294,6 +309,7 @@ el.generate.addEventListener('click', async () => {
       state.result = await gen.generateVideo({ width, height, bitmaps }, { comment });
       state.grid = null;
       showCode();
+      showRunHint(gen);
       el.copy.disabled = false;
       const totalRows = height + state.result.dataRows + 1 + state.result.commentRows;
       setStatus(t('done_video', {
@@ -314,6 +330,7 @@ el.generate.addEventListener('click', async () => {
     state.result = gen.generate(mask, { comment, ansi });
     state.grid = grid;
     showCode();
+    showRunHint(null);
     el.copy.disabled = false;
     const totalRows = state.result.height + 1 + state.result.commentRows;
     setStatus(t('done', { w: state.result.width, rows: totalRows, len: state.result.source.length }), 'ok');
@@ -322,6 +339,7 @@ el.generate.addEventListener('click', async () => {
     state.result = null;
     el.code.textContent = '';
     el.copy.disabled = true;
+    showRunHint(null);
   }
 });
 
