@@ -137,4 +137,21 @@ button:disabled { opacity: .4; cursor: not-allowed; }
   tab-size: 1;
 }
 
+.run-hint { margin-top: 1rem; font-size: .85rem; color: #9aa3b0; }
+.run-hint[hidden] { display: none; }
+.run-hint h3 { margin: 0 0 .35rem; font-size: .9rem; color: var(--fg); }
+.run-hint p { margin: 0 0 .5rem; }
+.run-cmd {
+  background: #0b0d12;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: .6rem .8rem;
+  overflow-x: auto;
+  font-family: "SFMono-Regular", ui-monospace, Menlo, Consolas, monospace;
+  font-size: 11px;
+  line-height: 1.4;
+  white-space: pre;
+  color: var(--fg);
+}
+
 @media (max-width: 760px) { main { grid-template-columns: 1fr; } }
