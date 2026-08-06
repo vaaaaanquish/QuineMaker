@@ -8,7 +8,7 @@
 
 ```sh
 # 生成した s.py を再生する例
-while :; do python3 s.py > n.py && mv n.py s.py; clear; cat s.py; sleep 0.2; done
+while :; do python s.py > n.py && mv n.py s.py; clear; cat s.py; sleep 0.2; done
 ```
 
 ## 開発

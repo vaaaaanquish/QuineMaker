@@ -22,7 +22,7 @@ const el = {
   runHint: $('runHint'), runCmd: $('runCmd'),
 };
 
-const RUNNERS = { python: 'python3', javascript: 'node' };
+const RUNNERS = { python: 'python', javascript: 'node' };
 
 // Video mode: show a copy-pastable terminal loop that plays the chain.
 // Hidden for image results and cleared on errors / new input.
