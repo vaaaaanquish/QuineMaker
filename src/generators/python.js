@@ -19,6 +19,7 @@
 
 import { b64encodeUtf8, b64encodeBytes, packBits } from './base64.js';
 import { colorSegment, composeColoredRows } from './ansi.js';
+import { buildVideoChain } from './videochain.js';
 
 const DELIM = '#!#'; // not in the base64 alphabet
 const HEAD = "p='''";
@@ -113,6 +114,39 @@ for r in range(G):
  if cur!=-1:w.append("\\x1b[0m")
  o.append("".join(w))
 o.append(z.b64decode(P[2]).decode())
+sys.stdout.write("\\n".join(o)+"\\n")
+`;
+}
+
+// Video-chain renderer (see videochain.js for the format): inflates the
+// all-frames layout blob, cuts out frame n = (i+1) mod N, and re-emits the
+// SAME payload with only the index bumped — opener row, data rows, then the
+// picture (last, so the terminal ends on it), then the boot line. After N
+// runs the original S_0 comes back: a quine of period N.
+function buildVideoRenderer(W, G, N) {
+  return `import base64 as z,zlib,sys
+q="".join(p.split())
+P=q.split("${DELIM}")
+W=${W};G=${G};N=${N};S=(W*G+7)//8
+n=(int(P[2])+1)%N
+M=zlib.decompress(z.b64decode(P[3]))
+b=[(M[n*S+(j>>3)]>>(7-(j&7)))&1 for j in range(W*G)]
+T="${DELIM}".join([P[0],P[1],str(n),P[3]])+"${DELIM}"
+L=len(T);F=P[0]
+C=sum(b);A=W-5
+X=-(-(L-A-C)//W) if L>A+C else 0
+def g(k):return T[k] if k<L else F[(k-L)%len(F)]
+o=["p='''"+"".join(g(k) for k in range(A))]
+k=A
+for r in range(X):
+ o.append("".join(g(k+u) for u in range(W)));k+=W
+for r in range(G):
+ w=[]
+ for u in range(W):
+  if b[r*W+u]:w.append(g(k));k+=1
+  else:w.append(" ")
+ o.append("".join(w))
+o.append(z.b64decode(P[1]).decode())
 sys.stdout.write("\\n".join(o)+"\\n")
 `;
 }
@@ -244,5 +278,24 @@ export const pythonGenerator = {
       : undefined;
     const commentRows = bottomText.split('\n').length - 1;
     return { source, colored, nCode: nPayload, width: W, height: G, commentRows, ansi };
+  },
+
+  /**
+   * Generate the CYCLIC video chain: running S_i prints S_{(i+1) mod N}
+   * byte-for-byte, so after N runs the original program comes back — a quine
+   * of period N. Payload that doesn't fit in the picture goes into data rows
+   * above it, so any frame count fits at any width >= MIN_WIDTH. Only S_0 is
+   * materialized; `composeFrame(i)` builds any other frame on demand.
+   * @param {{width:number,height:number,bitmaps:Uint8Array[]}} frames 1 = code cell
+   */
+  async generateVideo(frames, opts = {}) {
+    const W = frames.width;
+    if (W < MIN_WIDTH) {
+      throw Object.assign(new Error('width too small'),
+        { code: 'err_width_small', params: { w: W, min: MIN_WIDTH } });
+    }
+    const bottomText = buildBottomText(
+      (opts.comment || '').replace(/[\r\n]+/g, ' '), W, BOOT);
+    return buildVideoChain(frames, { head: HEAD, delim: DELIM, bottomText, buildRenderer: buildVideoRenderer });
   },
 };

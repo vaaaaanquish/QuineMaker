@@ -1,7 +1,9 @@
-// App wiring: image -> grid -> mask -> generated quine, plus copy.
-// The output width is always auto-optimized; users don't pick it.
+// App wiring: image/video -> grid(s) -> mask -> generated quine (or quine
+// chain), plus copy. The output width is always auto-optimized; users don't
+// pick it.
 import { loadImage, imageToGrid, gridToCanvas } from './image.js';
-import { makeMask } from './mask.js';
+import { loadVideo, releaseVideo, frameLumas, frameCountFor, binarizeLuma } from './video.js';
+import { makeMask, makeVideoBitmaps } from './mask.js';
 import { getGenerator, listGenerators } from './generators/index.js';
 import { lift } from './generators/ansi.js';
 import { initI18n, t } from './i18n.js';
@@ -13,6 +15,7 @@ const el = {
   drop: $('drop'), file: $('file'), preview: $('preview'),
   lang: $('lang'),
   thresh: $('thresh'), threshVal: $('threshVal'), invert: $('invert'),
+  fpsRow: $('fpsRow'), fps: $('fps'), fpsVal: $('fpsVal'), frameCount: $('frameCount'),
   colorize: $('colorize'), ansi: $('ansi'),
   comment: $('comment'), generate: $('generate'), status: $('status'),
   copy: $('copy'), code: $('code'),
@@ -21,8 +24,11 @@ const el = {
 const SEARCH_MAX = 200;
 const PREFER_WIDTH = 120;  // search picks the fitting width closest to this
 const PREVIEW_WIDTH = 120; // width used only for the on-screen binary preview
+const VIDEO_WIDTH = 120;   // video mode: fixed width — the chain has no
+                           // capacity constraint (payload spills into data
+                           // rows below the picture), so no search is needed
 
-// Scan widths and pick the fitting one closest to PREFER_WIDTH.
+// Scan widths and pick the fitting one closest to PREFER_WIDTH (image mode).
 function findBestWidth(img, { threshold, invert, comment, gen, ansi }) {
   let best = null;
   for (let W = gen.minWidth; W <= SEARCH_MAX; W++) {
@@ -37,10 +43,15 @@ function findBestWidth(img, { threshold, invert, comment, gen, ansi }) {
 }
 
 const state = {
-  img: null,       // HTMLImageElement
-  result: null,    // {source,...}
-  grid: null,      // the grid (with per-cell colors) used for the last result
+  img: null,       // HTMLImageElement (image mode)
+  video: null,     // HTMLVideoElement (video mode)
+  lumas: null,     // {frames: Uint8ClampedArray[], width, height} — sampled luma grids
+  result: null,    // {source,...}; video results also carry composeFrame/dataRows
+  grid: null,      // the grid (with per-cell colors) used for the last image result
+  previewTimer: null,
 };
+
+let extractSeq = 0; // bumping this cancels any in-flight frame extraction
 
 const escapeHtml = (s) =>
   s.replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]));
@@ -98,12 +109,25 @@ function renderColored(source, grid, picHeight) {
   return out.join('\n');
 }
 
+// Video: the output pane shows the opener row, the picture and the closer;
+// the (possibly huge) data-row block between the opener row and the picture
+// is collapsed into a one-line marker. Copy still copies the full program.
+function videoDisplayText(res) {
+  if (!res.dataRows) return res.source;
+  const lines = res.source.split('\n');
+  return lines[0] +
+    '\n' + t('data_rows_omitted', { x: res.dataRows }) + '\n' +
+    lines.slice(1 + res.dataRows).join('\n');
+}
+
 // Paint the current result into the code pane. In ANSI mode we show `colored`
 // — what the file prints when run — while the copy/save path uses the clean
 // `source`; otherwise the colorize toggle tints the plain source.
 function showCode() {
   if (!state.result) return;
-  if (state.result.ansi) {
+  if (state.result.composeFrame) {
+    el.code.textContent = videoDisplayText(state.result);
+  } else if (state.result.ansi) {
     el.code.innerHTML = ansiToHtml(state.result.colored);
   } else if (el.colorize.checked && state.grid) {
     el.code.innerHTML = renderColored(state.result.source, state.grid, state.result.height);
@@ -124,13 +148,69 @@ for (const { id, label } of listGenerators()) {
   el.lang.appendChild(opt);
 }
 
-// ---- image loading ----
+// ---- image / video loading ----
+function resetInput() {
+  extractSeq++;
+  clearInterval(state.previewTimer);
+  state.previewTimer = null;
+  releaseVideo(state.video);
+  state.img = null;
+  state.video = null;
+  state.lumas = null;
+}
+
+function updateFrameCount() {
+  if (!state.video) return;
+  el.frameCount.textContent =
+    t('frames_est', { n: frameCountFor(state.video, +el.fps.value) });
+}
+
+// Extract (or re-extract) luma frames for the current video and fps setting.
+// Superseded runs (new file / new fps) bail out silently via extractSeq.
+async function extractVideoFrames() {
+  const seq = ++extractSeq;
+  const lumas = await frameLumas(state.video, {
+    fps: +el.fps.value,
+    width: VIDEO_WIDTH,
+    isCancelled: () => seq !== extractSeq,
+    onProgress: (i, n) => {
+      if (seq === extractSeq && (i % 10 === 0 || i === n)) {
+        setStatus(t('status_extracting_n', { i, n }));
+      }
+    },
+  });
+  if (!lumas || seq !== extractSeq) return;
+  state.lumas = lumas;
+  updatePreview();
+}
+
 async function handleFile(file) {
-  if (!file || !file.type.startsWith('image/')) {
+  if (!file || !(file.type.startsWith('image/') || file.type.startsWith('video/'))) {
     setStatus(t('err_pick_image'), 'error');
     return;
   }
+  if (file.type.startsWith('video/')) {
+    try {
+      resetInput();
+      el.fpsRow.hidden = false;
+      el.ansi.checked = false;      // not supported for video
+      el.ansi.disabled = true;
+      el.colorize.checked = false;  // not supported for video
+      el.colorize.disabled = true;
+      setStatus(t('status_extracting_n', { i: 0, n: '…' }));
+      state.video = await loadVideo(file);
+      updateFrameCount();
+      await extractVideoFrames();
+    } catch {
+      setStatus(t('err_load_video'), 'error');
+    }
+    return;
+  }
   try {
+    resetInput();
+    el.fpsRow.hidden = true;
+    el.ansi.disabled = false;
+    el.colorize.disabled = false;
     state.img = await loadImage(file);
     updatePreview();
   } catch {
@@ -150,11 +230,28 @@ el.drop.addEventListener('drop', (e) => {
 
 // ---- binary preview (at a fixed width; the real width is chosen on generate)
 function updatePreview() {
-  if (!state.img) return;
+  if (!state.img && !state.lumas) return;
   el.threshVal.textContent = el.thresh.value;
-  const grid = imageToGrid(state.img, { width: PREVIEW_WIDTH, threshold: +el.thresh.value });
-  const mask = makeMask(grid.cells, grid.width, grid.height, { invert: el.invert.checked });
-  gridToCanvas(grid, el.preview, { charBit: mask.charBit });
+  clearInterval(state.previewTimer);
+  state.previewTimer = null;
+  if (state.lumas) {
+    // video: re-binarize the cached luma grids and animate at the chosen fps.
+    // The preview shows the MOVIE (dark pixel = ink), independent of which
+    // side the code characters land on.
+    const { frames, width, height } = state.lumas;
+    const cellsList = frames.map((l) => binarizeLuma(l, +el.thresh.value));
+    let j = 0;
+    const draw = () => {
+      gridToCanvas({ cells: cellsList[j], width, height }, el.preview, { charBit: 1 });
+      j = (j + 1) % cellsList.length;
+    };
+    draw();
+    state.previewTimer = setInterval(draw, Math.max(80, 1000 / +el.fps.value));
+  } else {
+    const grid = imageToGrid(state.img, { width: PREVIEW_WIDTH, threshold: +el.thresh.value });
+    const mask = makeMask(grid.cells, grid.width, grid.height, { invert: el.invert.checked });
+    gridToCanvas(grid, el.preview, { charBit: mask.charBit });
+  }
   el.preview.hidden = false;
   setStatus('');
   el.generate.disabled = false;
@@ -163,18 +260,49 @@ function updatePreview() {
 
 for (const c of [el.thresh, el.invert]) c.addEventListener('input', updatePreview);
 
+// Sampling-fps slider: label updates live; frames re-extract on release.
+el.fps.addEventListener('input', () => {
+  el.fpsVal.textContent = el.fps.value;
+  updateFrameCount();
+});
+el.fps.addEventListener('change', async () => {
+  if (!state.video) return;
+  try {
+    await extractVideoFrames();
+  } catch {
+    setStatus(t('err_load_video'), 'error');
+  }
+});
+
 // Toggling colorize only affects how the already-generated code is painted.
 el.colorize.addEventListener('change', showCode);
 
 // ---- generate (always auto-optimizes the width) ----
-el.generate.addEventListener('click', () => {
-  if (!state.img) return;
+el.generate.addEventListener('click', async () => {
+  if (!state.img && !state.lumas) return;
   const gen = getGenerator(el.lang.value);
   const threshold = +el.thresh.value;
   const invert = el.invert.checked;
   const comment = el.comment.value;
   const ansi = el.ansi.checked;
   try {
+    if (state.lumas) {
+      // video: fixed width, no search — any frame count fits
+      const { frames, width, height } = state.lumas;
+      const cellsList = frames.map((l) => binarizeLuma(l, threshold));
+      const { bitmaps } = makeVideoBitmaps(cellsList, { invert });
+      state.result = await gen.generateVideo({ width, height, bitmaps }, { comment });
+      state.grid = null;
+      showCode();
+      el.copy.disabled = false;
+      const totalRows = height + state.result.dataRows + 1 + state.result.commentRows;
+      setStatus(t('done_video', {
+        n: state.result.frames, w: width, g: height,
+        rows: totalRows, len: state.result.source.length,
+      }), 'ok');
+      return;
+    }
+
     setStatus(t('status_searching'));
     const best = findBestWidth(state.img, { threshold, invert, comment, gen, ansi });
     if (!best) { const e = new Error('no width'); e.code = 'err_no_width'; throw e; }

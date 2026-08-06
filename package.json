@@ -5,7 +5,7 @@
   "type": "module",
   "private": true,
   "scripts": {
-    "test": "node tests/quine.test.mjs",
+    "test": "node tests/quine.test.mjs && node tests/video.test.mjs",
     "serve": "python3 -m http.server 8000"
   }
 }

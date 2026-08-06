@@ -34,8 +34,11 @@ export function loadImage(file) {
  */
 export function imageToGrid(img, { width, threshold }) {
   const W = Math.max(1, Math.round(width));
+  // source size: HTMLImageElement / HTMLVideoElement / canvas
+  const sw = img.naturalWidth ?? img.videoWidth ?? img.width;
+  const sh = img.naturalHeight ?? img.videoHeight ?? img.height;
   // correct for the tall character cell so the picture isn't stretched
-  const H = Math.max(1, Math.round((W * img.naturalHeight * CHAR_ASPECT) / img.naturalWidth));
+  const H = Math.max(1, Math.round((W * sh * CHAR_ASPECT) / sw));
 
   const canvas = document.createElement('canvas');
   canvas.width = W;

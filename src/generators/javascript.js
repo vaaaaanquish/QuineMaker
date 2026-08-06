@@ -9,6 +9,7 @@
 
 import { b64encodeUtf8, b64encodeBytes, packBits } from './base64.js';
 import { colorSegment, composeColoredRows } from './ansi.js';
+import { buildVideoChain } from './videochain.js';
 
 const DELIM = '#!#';
 const HEAD = 'p=`';      // 3 chars woven into row 0
@@ -77,6 +78,33 @@ function buildRendererAnsi(W, G, B) {
     "else if((M[(r*W+c)>>3]>>(7-((r*W+c)&7))&1)===B){ci=idx[k];if(ci!==cur){a=pal[ci];w+='\\x1b[38;2;'+a[0]+';'+a[1]+';'+a[2]+'m';cur=ci}w+=q[k++]}\n" +
     "else{w+=' '}}if(cur!==-1)w+='\\x1b[0m';o.push(w)}\n" +
     "o.push(Buffer.from(P[2],'base64').toString());\n" +
+    "process.stdout.write(o.join('\\n')+'\\n');\n"
+  );
+}
+
+// Video-chain renderer (see videochain.js for the format): inflates the
+// all-frames layout blob, cuts out frame n = (i+1) mod N, and re-emits the
+// SAME payload with only the index bumped — opener row, data rows, then the
+// picture (last, so the terminal ends on it), then the boot line. After N
+// runs the original S_0 comes back: a quine of period N. Mirrors python.js.
+function buildVideoRenderer(W, G, N) {
+  return (
+    "q=p.replace(/\\s/g,'');\n" +
+    "P=q.split('" + DELIM + "');\n" +
+    "W=" + W + ";G=" + G + ";N=" + N + ";S=(W*G+7)>>3;\n" +
+    "n=(+P[2]+1)%N;\n" +
+    "M=require('zlib').inflateSync(Buffer.from(P[3],'base64'));\n" +
+    "b=[];for(j=0;j<W*G;j++)b.push(M[n*S+(j>>3)]>>(7-(j&7))&1);\n" +
+    "T=[P[0],P[1],''+n,P[3]].join('" + DELIM + "')+'" + DELIM + "';\n" +
+    "L=T.length;F=P[0];\n" +
+    "C=0;for(x of b)C+=x;A=W-3;\n" +
+    "X=L>A+C?Math.ceil((L-A-C)/W):0;\n" +
+    "g=k=>k<L?T[k]:F[(k-L)%F.length];\n" +
+    "w='p=`';for(k=0;k<A;k++)w+=g(k);o=[w];\n" +
+    "for(r=0;r<X;r++){w='';for(u=0;u<W;u++)w+=g(k++);o.push(w)}\n" +
+    "for(r=0;r<G;r++){w='';for(u=0;u<W;u++){\n" +
+    "if(b[r*W+u]){w+=g(k++)}else{w+=' '}}o.push(w)}\n" +
+    "o.push(Buffer.from(P[1],'base64').toString());\n" +
     "process.stdout.write(o.join('\\n')+'\\n');\n"
   );
 }
@@ -197,5 +225,21 @@ export const javascriptGenerator = {
       : undefined;
     const commentRows = bottomText.split('\n').length - 1;
     return { source, colored, nCode: nPayload, width: W, height: G, commentRows, ansi };
+  },
+
+  // Generate the CYCLIC video chain: running S_i prints S_{(i+1) mod N}
+  // byte-for-byte, so after N runs the original program comes back — a quine
+  // of period N. Payload that doesn't fit in the picture goes into data rows
+  // above it, so any frame count fits at any width >= MIN_WIDTH. Only S_0 is
+  // materialized; `composeFrame(i)` builds any other frame on demand.
+  async generateVideo(frames, opts = {}) {
+    const W = frames.width;
+    if (W < MIN_WIDTH) {
+      throw Object.assign(new Error('width too small'),
+        { code: 'err_width_small', params: { w: W, min: MIN_WIDTH } });
+    }
+    const bottomText = buildBottomText(
+      (opts.comment || '').replace(/[\r\n]+/g, ' '), W, BOOT);
+    return buildVideoChain(frames, { head: HEAD, delim: DELIM, bottomText, buildRenderer: buildVideoRenderer });
   },
 };
