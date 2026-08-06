@@ -85,6 +85,7 @@ main {
 
 label { display: block; margin: .75rem 0; font-size: .9rem; }
 label.checkbox { display: flex; align-items: center; gap: .5rem; }
+label.checkbox:has(input:disabled) { opacity: .4; cursor: not-allowed; }
 select, input[type="text"] {
   width: 100%;
   margin-top: .25rem;
@@ -111,6 +112,7 @@ button:disabled { opacity: .4; cursor: not-allowed; }
 .toolbar button { background: #222836; color: var(--ink); border: 1px solid var(--border); }
 #generate { width: 100%; margin-top: .5rem; }
 
+.hint { font-size: .8rem; color: #9aa3b0; }
 .status { min-height: 2.8em; font-size: .85rem; color: #9aa3b0; }
 .status.ok { color: var(--ok); }
 .status.error { color: var(--err); }

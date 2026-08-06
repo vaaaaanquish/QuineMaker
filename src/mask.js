@@ -25,3 +25,19 @@ export function makeMask(cells, width, height, { invert = false, colors = null }
   const charBit = invert ? (maj ^ 1) : maj;
   return { width, height, cells, charBit, colors };
 }
+
+/** Normalize video frame grids to code bitmaps (1 = code cell).
+ *  Characters go on the LIGHT pixels (charBit 0): on the usual dark terminal
+ *  bright characters then match the video's light regions, so the picture
+ *  reads with correct polarity. (Image mode picks the majority bit to
+ *  maximize payload capacity; the video chain overflows into data rows, so
+ *  capacity doesn't matter and looks win.) `invert` flips this. */
+export function makeVideoBitmaps(cellGrids, { invert = false } = {}) {
+  const charBit = invert ? 1 : 0;
+  const bitmaps = cellGrids.map((cells) => {
+    const b = new Uint8Array(cells.length);
+    for (let i = 0; i < cells.length; i++) b[i] = cells[i] === charBit ? 1 : 0;
+    return b;
+  });
+  return { charBit, bitmaps };
+}
